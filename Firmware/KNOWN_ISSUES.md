@@ -1,8 +1,11 @@
 # Known issues in the Knot firmware
 
 Found during a code review on 2026-11-20, while adding the relative CC
-(binary offset → two's complement) conversion. None of these are fixed yet.
-Line numbers refer to the code as of commit `c703fc2`.
+(binary offset → two's complement) conversion. Items 1–6 were fixed on the
+`bugfixes` branch the same day; the descriptions below are kept for reference.
+Fixes 1, 2 and the SysEx part of 6 are covered by unit tests. The USB and queue
+fixes (3, 4, 5) compile in CI but still need checking on hardware. Line numbers
+refer to the code as of commit `c703fc2`.
 
 Items marked **confirmed** were reproduced by running
 `components/knot_midi_translator/knot_midi_translator.c` on the host with test
@@ -12,17 +15,19 @@ input, the first one under AddressSanitizer.
 
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
-| 1 | TRS parser buffer overrun on data bytes with no status byte | High | Confirmed |
-| 2 | System Common messages from TRS lost or mis-encoded | Medium | Confirmed |
-| 3 | USB device with a single MIDI endpoint causes reboot loop | Medium | From code reading |
-| 4 | USB output stalls after hot-plug; transfer buffer reuse | Medium | From code reading |
-| 5 | MIDI queues not thread-safe and overflow silently | Low–Medium | From code reading |
-| 6 | Minor issues | Low | From code reading |
-| 7 | OP-Z on the USB-A host port doesn't work | Medium | Observed on hardware, cause unknown |
+| 1 | TRS parser buffer overrun on data bytes with no status byte | High | **Fixed** (unit tested) |
+| 2 | System Common messages from TRS lost or mis-encoded | Medium | **Fixed** (unit tested) |
+| 3 | USB device with a single MIDI endpoint causes reboot loop | Medium | **Fixed** (needs hardware test) |
+| 4 | USB output stalls after hot-plug; transfer buffer reuse | Medium | **Fixed** (needs hardware test) |
+| 5 | MIDI queues not thread-safe and overflow silently | Low–Medium | **Fixed** (needs hardware test) |
+| 6 | Minor issues | Low | **Mostly fixed** (see below) |
+| 7 | OP-Z on the USB-A host port doesn't work | Medium | Open; fix 6 may help, retest |
 
 ---
 
 ## 1. TRS parser buffer overrun (confirmed)
+
+> **Fix:** data bytes with no status byte to attach to are now ignored. A random-input stress test (2 million bytes, clean under ASan/UBSan) checks the buffer index never exceeds 3.
 
 **Where:** `components/knot_midi_translator/knot_midi_translator.c`,
 `uart_midi_process_byte()`, data-byte branch (~line 226).
@@ -48,6 +53,8 @@ after reset. ASan reports a global-buffer-overflow on the first byte.
 running status). As a safeguard, never write when `index >= 3`.
 
 ## 2. System Common messages from TRS lost or mis-encoded (confirmed)
+
+> **Fix:** System Common messages are parsed with their real lengths, cancel running status and use the correct USB-MIDI CIN.
 
 **Where:** `uart_midi_process_byte()` (status-byte branch, ~line 216) and
 `midi_uart_to_usb()` (~line 127).
@@ -75,6 +82,8 @@ tests alongside the existing ones in `host_test/main.c`.
 
 ## 3. Single-endpoint USB MIDI devices cause a reboot loop
 
+> **Fix:** endpoints are found by walking `bNumEndpoints`. Input-only or output-only devices are supported, and a failed interface claim is logged and retried instead of aborting.
+
 **Where:** `components/knot_midi_usb/knot_midi_usb.c`,
 `midi_find_intf_and_ep_desc()` (~lines 144 and 192) and
 `action_get_config_desc()` (~line 355).
@@ -90,6 +99,8 @@ endpoint as "input-only": skip the OUT transfer setup and make
 `knot_midi_usb_send_packet()` a no-op.
 
 ## 4. USB output stalls after hot-plug; transfer buffer reuse
+
+> **Fix:** the busy flag is released on failed submits and on disconnect. The OUT transfer is reused, the IN transfer is reallocated when needed, `in_transfer_cb` checks the status, and endpoints are halted and flushed before the interface is released.
 
 **Where:** `knot_midi_usb.c`: `usb_out_ready` (~line 279),
 `knot_midi_usb_send_packet()`, `aciton_close_dev()` (~line 418) and
@@ -115,6 +126,8 @@ again when a submit returns an error. Check the status in `in_transfer_cb`.
 
 ## 5. MIDI queues not thread-safe; silent overflow
 
+> **Fix:** critical sections around every queue operation. Pushes into a full queue are refused (a counter tracks drops), and the queues now hold 128 entries.
+
 **Where:** `components/knot_midi_queue/knot_midi_queue.c`.
 
 **What happens:**
@@ -132,6 +145,8 @@ and pop with a `portMUX` critical section, and refuse or count pushes when the
 queue is full.
 
 ## 6. Minor issues
+
+> **Fix status:** unterminated SysEx, non-IAD interface detection, the UART read cap (the RX task now also blocks instead of spinning) and `grid_platform_printf()` are fixed. The other busy-wait tasks and the unused `usb_in_ready` code are unchanged.
 
 - **Unterminated SysEx:** a status byte (other than real-time) received during
   SysEx should end the SysEx. Currently it is stored as SysEx data and the
