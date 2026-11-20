@@ -3,7 +3,14 @@
 >
 > This is a fork of [intechstudio/knot](https://github.com/intechstudio/knot). It modifies the Knot firmware so that a MIDI controller whose relative encoders only send **binary offset** values can work with a **Teenage Engineering OP-Z**, which expects relative values in **two's complement**.
 >
-> **What it does:** Control Change messages on **CC 32–49**, on any MIDI channel, are converted from binary offset to 7-bit two's complement as they pass through Knot. This applies to MIDI from both the USB host port and the TRS input, and to every output (TRS out, USB out and MIDI thru). All other messages pass through unchanged.
+> **What it does:** Control Change messages on **CC 32–49**, on any MIDI channel, are converted from binary offset to 7-bit two's complement as they pass through Knot. All other messages pass through unchanged. The conversion applies on every route Knot has:
+> - USB controller (on the USB-A host port) → TRS MIDI out
+> - TRS MIDI in → the USB device on the USB-A host port
+> - TRS MIDI in → TRS MIDI out (MIDI thru, when enabled)
+>
+> Knot only works as a USB host, so no MIDI is sent from the USB-A port to the USB-C port or to a computer. With an OP-Z, either of these setups converts the CCs:
+> - USB controller on the USB-A port, with the OP-Z receiving from Knot's TRS MIDI out.
+> - TRS/DIN controller on Knot's TRS MIDI in, with the OP-Z plugged into the USB-A port.
 >
 > | Turn | Binary offset in | Two's complement out |
 > |------|------------------|----------------------|
