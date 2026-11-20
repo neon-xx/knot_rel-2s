@@ -114,15 +114,15 @@ struct usb_midi_event_packet midi_uart_to_usb(struct uart_midi_event_packet uart
   }
 
   switch (uart_packet.byte1) {
-  case 0xF7: // Sysex stop (single byte)
-  case 0xF6: // Tune Request
+  case 0xF7:         // Sysex stop (single byte)
+  case 0xF6:         // Tune Request
     ev.byte0 = 0x05; // Single-byte System Common message or SysEx end
     break;
-  case 0xF1: // MTC Quarter Frame
-  case 0xF3: // Song Select
+  case 0xF1:         // MTC Quarter Frame
+  case 0xF3:         // Song Select
     ev.byte0 = 0x02; // Two-byte System Common message
     break;
-  case 0xF2: // Song Position Pointer
+  case 0xF2:         // Song Position Pointer
     ev.byte0 = 0x03; // Three-byte System Common message
     break;
   default:

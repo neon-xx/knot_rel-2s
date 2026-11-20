@@ -116,9 +116,18 @@ void knot_midi_uart_rx_task(void* arg) {
     bzero(dtmp, RD_BUF_SIZE);
     int length = 0;
 
-    uart_get_buffered_data_len(EX_UART_NUM, (size_t*)&length);
-    // Waiting for UART event.
-    if (uart_read_bytes(EX_UART_NUM, dtmp, length, portMAX_DELAY)) {
+    size_t buffered = 0;
+    uart_get_buffered_data_len(EX_UART_NUM, &buffered);
+
+    // Read what is buffered (at most RD_BUF_SIZE). If nothing is buffered,
+    // block until at least one byte arrives instead of spinning.
+    length = (buffered > RD_BUF_SIZE) ? RD_BUF_SIZE : (int)buffered;
+    if (length == 0) {
+      length = 1;
+    }
+
+    length = uart_read_bytes(EX_UART_NUM, dtmp, length, portMAX_DELAY);
+    if (length > 0) {
       // led_rx_effect_start();
 
       grid_alert_one_set(&grid_led_state, 0, 200, 200, 200, 30);

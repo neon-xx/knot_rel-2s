@@ -322,7 +322,7 @@ void grid_platform_printf(char const* fmt, ...) {
 
   va_end(ap);
 
-  ets_printf(temp);
+  ets_printf("%s", temp);
 }
 
 #include "knot_platform.h"
