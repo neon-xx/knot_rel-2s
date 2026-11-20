@@ -33,10 +33,10 @@ jobs:
         run: echo "ACTION_DATE=$(date +'%Y-%m-%d-%H%M')" >> $GITHUB_ENV
 
       - name: Copy artifact
-        run: cp binary/midi_host_fw.uf2 knot_esp32_${{ env.ACTION_DATE }}.uf2
+        run: cp binary/midi_host_fw.uf2 knot_rel-2s_opz-cc32-49_${{ env.ACTION_DATE }}.uf2
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
           name: firmware
-          path: knot_esp32_${{ env.ACTION_DATE }}.uf2
+          path: knot_rel-2s_opz-cc32-49_${{ env.ACTION_DATE }}.uf2
