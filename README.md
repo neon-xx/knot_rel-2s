@@ -1,3 +1,25 @@
+> [!NOTE]
+> ## About this fork: relative CC translation for the OP-Z
+>
+> This is a fork of [intechstudio/knot](https://github.com/intechstudio/knot). It modifies the Knot firmware so that a MIDI controller whose relative encoders only send **binary offset** values can work with a **Teenage Engineering OP-Z**, which expects relative values in **two's complement**.
+>
+> **What it does:** Control Change messages on **CC 32–49**, on any MIDI channel, are converted from binary offset to 7-bit two's complement as they pass through Knot. This applies to MIDI from both the USB host port and the TRS input, and to every output (TRS out, USB out and MIDI thru). All other messages pass through unchanged.
+>
+> | Turn | Binary offset in | Two's complement out |
+> |------|------------------|----------------------|
+> | +1   | 65               | 1                    |
+> | +10  | 74               | 10                   |
+> | 0    | 64               | 0                    |
+> | −1   | 63               | 127                  |
+> | −10  | 54               | 118                  |
+>
+> **Download:** get the latest `.uf2` from this fork's [Nightly Firmware release](https://github.com/neon-xx/knot_rel-2s/releases/tag/nightly-firmware) and flash it as described in [Updating the firmware](#updating-the-firmware) below. The *Nightly Release* link further down points to the original, unmodified firmware.
+>
+> **Notes:**
+> - Every CC 32–49 message is converted, so don't use this firmware with a controller that sends ordinary absolute values on those CCs.
+> - To change the CC range, edit `KNOT_REL_CC_FIRST` / `KNOT_REL_CC_LAST` in [`Firmware/components/knot_midi_translator/knot_midi_translator.h`](Firmware/components/knot_midi_translator/knot_midi_translator.h). Pushing to `main` rebuilds and republishes the firmware.
+> - Known bugs in the original Knot firmware, which this fork has not fixed yet, are listed in [`Firmware/KNOWN_ISSUES.md`](Firmware/KNOWN_ISSUES.md).
+
 ## KNOT - USB MIDI Host
 
 Knot is the bridge between old-school MIDI gear like synthesizers, groove boxes, guitar pedals and neat USB MIDI devices. Leave out the computer from the equation and control instruments seamlessly with Grid - or any other - USB controller.
