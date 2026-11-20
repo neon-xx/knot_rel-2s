@@ -8,9 +8,11 @@
 > - TRS MIDI in → the USB device on the USB-A host port
 > - TRS MIDI in → TRS MIDI out (MIDI thru, when enabled)
 >
-> Knot only works as a USB host, so no MIDI is sent from the USB-A port to the USB-C port or to a computer. With an OP-Z, either of these setups converts the CCs:
-> - USB controller on the USB-A port, with the OP-Z receiving from Knot's TRS MIDI out.
-> - TRS/DIN controller on Knot's TRS MIDI in, with the OP-Z plugged into the USB-A port.
+> Knot only works as a USB host, so no MIDI is sent from the USB-A port to the USB-C port or to a computer.
+>
+> **Supported OP-Z setup:** plug the USB controller into Knot's USB-A host port, and connect Knot's **TRS MIDI out** to the OP-Z's TRS MIDI input (through its module).
+>
+> Connecting the OP-Z directly to Knot's USB-A port currently **does not work**. The cause hasn't been found yet; see the USB-related items in [`Firmware/KNOWN_ISSUES.md`](Firmware/KNOWN_ISSUES.md).
 >
 > | Turn | Binary offset in | Two's complement out |
 > |------|------------------|----------------------|

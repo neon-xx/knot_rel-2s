@@ -18,6 +18,7 @@ input, the first one under AddressSanitizer.
 | 4 | USB output stalls after hot-plug; transfer buffer reuse | Medium | From code reading |
 | 5 | MIDI queues not thread-safe and overflow silently | Low–Medium | From code reading |
 | 6 | Minor issues | Low | From code reading |
+| 7 | OP-Z on the USB-A host port doesn't work | Medium | Observed on hardware, cause unknown |
 
 ---
 
@@ -151,6 +152,30 @@ queue is full.
 - **`grid_platform_printf()`** (`main/midi_host_fw.c`) passes the formatted
   text to `ets_printf()` as a format string. Any `%` in the output is
   interpreted again. Use `ets_printf("%s", temp)`.
+
+## 7. OP-Z on the USB-A host port doesn't work (observed)
+
+**Reported:** 2026-11-20, with this fork's firmware. Sending to the OP-Z through
+Knot's TRS MIDI out works. Plugging the OP-Z directly into Knot's USB-A host
+port doesn't. The relative CC change only rewrites CC values and is unlikely to
+be the cause.
+
+**Likely causes, to check in this order:**
+1. **Interface detection (#6 above):** the OP-Z is a combined USB audio and
+   MIDI device. If its device class isn't `0/0/0` or `EF/02/01`, the non-IAD
+   path claims the wrong interface number, and `ESP_ERROR_CHECK` on
+   `usb_host_interface_claim()` aborts, which reboots Knot.
+2. **USB output stall after hot-plug (#4 above).**
+3. **Power:** the OP-Z may try to charge from the USB-A port and draw more
+   current than the port supplies (unverified).
+
+**To narrow it down:**
+- Check whether Knot's "waiting" LED animation stops when the OP-Z is plugged
+  in. It stops only once a device has been opened.
+- Try the official Intech firmware.
+- Power Knot up with the OP-Z already connected, to rule out hot-plug.
+- Capture the OP-Z's USB descriptor on a computer (`lsusb -v`, or macOS System
+  Information → USB) to check cause 1.
 
 ---
 
