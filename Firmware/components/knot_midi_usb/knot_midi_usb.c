@@ -85,128 +85,80 @@ static void action_get_info(class_driver_t* driver_obj) {
 
 unsigned long loopcounter = 0;
 
-static esp_err_t midi_find_intf_and_ep_desc(class_driver_t* driver_obj, const usb_ep_desc_t** in_ep, const usb_ep_desc_t** out_ep, int* intf_num) {
-  bool interface_found = false;
-  const usb_config_desc_t* config_desc;
-  const usb_device_desc_t* device_desc;
-  int intf_idx = -1;
-  int desc_offset = 0;
+#define USB_SUBCLASS_MIDISTREAMING 0x03
 
-  // Get required descriptors
-  ESP_ERROR_CHECK(usb_host_get_device_descriptor(driver_obj->dev_hdl, &device_desc));
+static bool midi_ep_is_bulk_or_interrupt(const usb_ep_desc_t* ep) {
+  uint8_t type = ep->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK;
+  return type == USB_BM_ATTRIBUTES_XFER_BULK || type == USB_BM_ATTRIBUTES_XFER_INT;
+}
+
+/*
+ * Find the first MIDI Streaming interface (any device class, any alternate
+ * setting) that has at least one bulk/interrupt endpoint, and return its
+ * interface number, alternate setting and IN/OUT endpoints. Either endpoint
+ * may be NULL if the interface only has one direction.
+ */
+static esp_err_t midi_find_intf_and_ep_desc(class_driver_t* driver_obj, const usb_ep_desc_t** in_ep, const usb_ep_desc_t** out_ep, int* intf_num, int* intf_alt) {
+
+  const usb_config_desc_t* config_desc;
   ESP_ERROR_CHECK(usb_host_get_active_config_descriptor(driver_obj->dev_hdl, &config_desc));
 
-#define USB_SUBCLASS_NULL 0x00
-#define USB_SUBCLASS_COMMON 0x02
+  *in_ep = NULL;
+  *out_ep = NULL;
 
-#define USB_PROTOCOL_NULL 0x00
-#define USB_DEVICE_PROTOCOL_IAD 0x01
+  int desc_offset = 0;
+  const usb_standard_desc_t* this_desc = (const usb_standard_desc_t*)config_desc;
 
-  if (((device_desc->bDeviceClass == USB_CLASS_MISC) && (device_desc->bDeviceSubClass == USB_SUBCLASS_COMMON) && (device_desc->bDeviceProtocol == USB_DEVICE_PROTOCOL_IAD)) ||
-      ((device_desc->bDeviceClass == USB_CLASS_PER_INTERFACE) && (device_desc->bDeviceSubClass == USB_SUBCLASS_NULL) && (device_desc->bDeviceProtocol == USB_PROTOCOL_NULL))) {
+  while (1) {
 
-    ESP_LOGI(TAG, "IAD");
+    this_desc = usb_parse_next_descriptor_of_type(this_desc, config_desc->wTotalLength, USB_B_DESCRIPTOR_TYPE_INTERFACE, &desc_offset);
 
-    const usb_standard_desc_t* this_desc = (const usb_standard_desc_t*)config_desc;
-    do {
-
-      ESP_LOGI(TAG, "TRY");
-      intf_idx++;
-
-      this_desc = usb_parse_next_descriptor_of_type(this_desc, config_desc->wTotalLength, USB_B_DESCRIPTOR_TYPE_INTERFACE, &desc_offset);
-
-      if (this_desc == NULL) {
-        ESP_LOGI(TAG, "INTERFACE NOT FOUND");
-        break; // Reached end of configuration descriptor
-      }
-
-      const usb_intf_desc_t* intf_desc = (const usb_intf_desc_t*)this_desc;
-
-      ESP_LOGI(TAG, "Interface %d %d %d %d", intf_desc->bInterfaceNumber, intf_desc->bInterfaceClass, intf_desc->bInterfaceSubClass, intf_desc->bInterfaceProtocol);
-
-#define USB_SUBCLASS_MIDISTREAMING 0x03
-      if (intf_desc->bInterfaceClass == USB_CLASS_AUDIO && intf_desc->bInterfaceSubClass == USB_SUBCLASS_MIDISTREAMING && intf_desc->bInterfaceProtocol == 0x00) {
-
-        ESP_LOGI(TAG, "MIDI INTERFACE FOUND %d", intf_desc->bInterfaceNumber);
-        *intf_num = intf_desc->bInterfaceNumber;
-        interface_found = true;
-      }
-
-    } while (!interface_found);
-
-    if (interface_found) {
-
-      usb_intf_desc_t* intf_desc = usb_parse_interface_descriptor(config_desc, *intf_num, 0, &desc_offset);
-
-      ESP_LOGI(TAG, "wTotal, offset: 0x%lx %d %d", (unsigned long int)intf_desc, config_desc->wTotalLength, desc_offset);
-
-      int temp_offset = desc_offset;
-      for (int i = 0; i < 2; i++) {
-        const usb_ep_desc_t* this_ep = usb_parse_endpoint_descriptor_by_index(intf_desc, i, config_desc->wTotalLength, &desc_offset);
-        assert(this_ep);
-        if (USB_EP_DESC_GET_EP_DIR(this_ep)) {
-          *in_ep = this_ep;
-          ESP_LOGI(TAG, "IN EP FOUND %d", this_ep->bEndpointAddress);
-        } else {
-          *out_ep = this_ep;
-          ESP_LOGI(TAG, "OUT EP FOUND %d", this_ep->bEndpointAddress);
-        }
-        desc_offset = temp_offset;
-      }
-
-      return ESP_OK;
+    if (this_desc == NULL) {
+      ESP_LOGI(TAG, "MIDI INTERFACE NOT FOUND");
+      return ESP_ERR_NOT_FOUND;
     }
-  } else {
-    ESP_LOGI(TAG, "NOT IAD");
 
-    const usb_standard_desc_t* this_desc = (const usb_standard_desc_t*)config_desc;
-    do {
+    const usb_intf_desc_t* intf_desc = (const usb_intf_desc_t*)this_desc;
 
-      ESP_LOGI(TAG, "TRY");
-      intf_idx++;
+    ESP_LOGI(TAG, "Interface %d alt %d class %d %d %d, %d endpoints", intf_desc->bInterfaceNumber, intf_desc->bAlternateSetting, intf_desc->bInterfaceClass, intf_desc->bInterfaceSubClass,
+             intf_desc->bInterfaceProtocol, intf_desc->bNumEndpoints);
 
-      this_desc = usb_parse_next_descriptor_of_type(this_desc, config_desc->wTotalLength, USB_B_DESCRIPTOR_TYPE_INTERFACE, &desc_offset);
-
-      if (this_desc == NULL) {
-        ESP_LOGI(TAG, "INTERFACE NOT FOUND");
-        break; // Reached end of configuration descriptor
-      }
-
-      const usb_intf_desc_t* intf_desc = (const usb_intf_desc_t*)this_desc;
-
-#define USB_SUBCLASS_MIDISTREAMING 0x03
-      if (intf_desc->bInterfaceClass == USB_CLASS_AUDIO && intf_desc->bInterfaceSubClass == USB_SUBCLASS_MIDISTREAMING && intf_desc->bInterfaceProtocol == 0x00) {
-
-        ESP_LOGI(TAG, "MIDI INTERFACE FOUND %d", intf_idx);
-        *intf_num = intf_idx;
-        interface_found = true;
-      }
-
-    } while (!interface_found);
-
-    if (interface_found) {
-
-      usb_intf_desc_t* intf_desc = usb_parse_interface_descriptor(config_desc, intf_idx, 0, &desc_offset);
-
-      int temp_offset = desc_offset;
-      for (int i = 0; i < 2; i++) {
-        const usb_ep_desc_t* this_ep = usb_parse_endpoint_descriptor_by_index(intf_desc, i, config_desc->wTotalLength, &desc_offset);
-        assert(this_ep);
-        if (USB_EP_DESC_GET_EP_DIR(this_ep)) {
-          *in_ep = this_ep;
-          ESP_LOGI(TAG, "IN EP FOUND %d", this_ep->bEndpointAddress);
-        } else {
-          *out_ep = this_ep;
-          ESP_LOGI(TAG, "OUT EP FOUND %d", this_ep->bEndpointAddress);
-        }
-        desc_offset = temp_offset;
-      }
-
-      return ESP_OK;
+    if (intf_desc->bInterfaceClass != USB_CLASS_AUDIO || intf_desc->bInterfaceSubClass != USB_SUBCLASS_MIDISTREAMING) {
+      continue;
     }
+
+    const usb_ep_desc_t* found_in = NULL;
+    const usb_ep_desc_t* found_out = NULL;
+
+    for (int i = 0; i < intf_desc->bNumEndpoints; i++) {
+      int ep_offset = desc_offset;
+      const usb_ep_desc_t* ep = usb_parse_endpoint_descriptor_by_index(intf_desc, i, config_desc->wTotalLength, &ep_offset);
+      if (ep == NULL || !midi_ep_is_bulk_or_interrupt(ep)) {
+        continue;
+      }
+      if (USB_EP_DESC_GET_EP_DIR(ep)) {
+        if (found_in == NULL) {
+          found_in = ep;
+        }
+      } else {
+        if (found_out == NULL) {
+          found_out = ep;
+        }
+      }
+    }
+
+    if (found_in == NULL && found_out == NULL) {
+      continue; // e.g. alternate setting 0 without endpoints
+    }
+
+    *in_ep = found_in;
+    *out_ep = found_out;
+    *intf_num = intf_desc->bInterfaceNumber;
+    *intf_alt = intf_desc->bAlternateSetting;
+
+    ESP_LOGI(TAG, "MIDI INTERFACE FOUND %d alt %d, IN ep %02x, OUT ep %02x", *intf_num, *intf_alt, found_in ? found_in->bEndpointAddress : 0, found_out ? found_out->bEndpointAddress : 0);
+    return ESP_OK;
   }
-
-  return ESP_ERR_NOT_FOUND;
 }
 
 static usb_transfer_t* out_transfer;
@@ -255,7 +207,23 @@ esp_err_t try_start_in_transfer(void) {
   return err;
 }
 
+static volatile bool DRAM_ATTR usb_in_active = false;
+
 static void in_transfer_cb(usb_transfer_t* in_transfer) {
+
+  if (in_transfer->status == USB_TRANSFER_STATUS_NO_DEVICE || in_transfer->status == USB_TRANSFER_STATUS_CANCELED) {
+    // device is gone or endpoint was flushed: do not resubmit
+    usb_in_active = false;
+    return;
+  }
+
+  if (in_transfer->status != USB_TRANSFER_STATUS_COMPLETED) {
+    // error / timeout / stall: no valid data, keep listening
+    if (usb_in_active && usb_host_transfer_submit(in_transfer) != ESP_OK) {
+      usb_in_active = false;
+    }
+    return;
+  }
 
   for (int i = 0; i < in_transfer->actual_num_bytes; i += 4) {
 
@@ -273,14 +241,23 @@ static void in_transfer_cb(usb_transfer_t* in_transfer) {
     knot_midi_queue_trsout_push(uart_midi_convert_relative_cc(usb_midi_to_uart(evt)));
   }
 
-  usb_host_transfer_submit(in_transfer);
+  if (usb_in_active && usb_host_transfer_submit(in_transfer) != ESP_OK) {
+    usb_in_active = false;
+  }
 }
 
 volatile uint8_t DRAM_ATTR usb_out_ready = 1;
 
+// true while a device with an OUT endpoint is open and out_transfer is set up for it
+static volatile bool DRAM_ATTR usb_out_connected = false;
+
 static void IRAM_ATTR out_transfer_cb(usb_transfer_t* out_transfer) {
   // ets_printf("Ready\n");
   usb_out_ready = 1;
+
+  if (!usb_out_connected) {
+    return;
+  }
 
   struct usb_midi_event_packet usb_ev = {0, 0, 0, 0};
 
@@ -297,7 +274,7 @@ uint8_t IRAM_ATTR knot_midi_usb_out_isready(void) { return usb_out_ready; }
 
 int IRAM_ATTR knot_midi_usb_send_packet(struct usb_midi_event_packet ev) {
 
-  if (out_transfer == NULL) {
+  if (out_transfer == NULL || !usb_out_connected) {
     return 1;
   }
 
@@ -311,6 +288,11 @@ int IRAM_ATTR knot_midi_usb_send_packet(struct usb_midi_event_packet ev) {
 
   usb_out_ready = 0;
   esp_err_t err = usb_host_transfer_submit(out_transfer);
+
+  if (err != ESP_OK) {
+    // no callback will follow a failed submit: release the busy flag
+    usb_out_ready = 1;
+  }
 
   return err;
 }
@@ -336,51 +318,78 @@ static void action_get_config_desc(class_driver_t* driver_obj) {
   const usb_ep_desc_t* in_ep = NULL;
   const usb_ep_desc_t* out_ep = NULL;
   int intf_num = -1;
-  midi_find_intf_and_ep_desc(driver_obj, &in_ep, &out_ep, &intf_num);
+  int intf_alt = 0;
 
-  if (intf_num != -1) {
+  if (midi_find_intf_and_ep_desc(driver_obj, &in_ep, &out_ep, &intf_num, &intf_alt) != ESP_OK) {
+    ESP_LOGI(TAG, "Iface not found, try later!");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    return;
+  }
 
-    ESP_LOGI(TAG, "SUKU claim interface %d nice", intf_num);
-    ESP_ERROR_CHECK(usb_host_interface_claim(driver_obj->client_hdl, driver_obj->dev_hdl, intf_num, 0));
+  esp_err_t err = usb_host_interface_claim(driver_obj->client_hdl, driver_obj->dev_hdl, intf_num, intf_alt);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Claiming interface %d alt %d failed: %s", intf_num, intf_alt, esp_err_to_name(err));
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    return;
+  }
 
-    driver_obj->claimed_interface = intf_num;
+  ESP_LOGI(TAG, "Claimed interface %d alt %d", intf_num, intf_alt);
+  driver_obj->claimed_interface = intf_num;
+  driver_obj->in_ep_addr = in_ep ? in_ep->bEndpointAddress : 0;
+  driver_obj->out_ep_addr = out_ep ? out_ep->bEndpointAddress : 0;
 
-    // Send an OUT transfer to EP3
+  if (out_ep != NULL) {
+    // The 4 byte OUT transfer is allocated once and reused for every device
     if (out_transfer == NULL) {
-      usb_host_transfer_alloc(4, 0, &out_transfer);
+      ESP_ERROR_CHECK(usb_host_transfer_alloc(4, 0, &out_transfer));
     }
     memset(out_transfer->data_buffer, 0xAA, 4);
     out_transfer->num_bytes = 4;
     out_transfer->device_handle = driver_obj->dev_hdl;
     out_transfer->bEndpointAddress = out_ep->bEndpointAddress;
     out_transfer->callback = out_transfer_cb;
-    out_transfer->context = (void*)&driver_obj;
-    ESP_LOGI(TAG, "Setup OUT transfer on ep %02x nice", out_ep->bEndpointAddress);
-    // usb_host_transfer_submit(in_transfer);
+    out_transfer->context = (void*)driver_obj;
+    usb_out_ready = 1;
+    usb_out_connected = true;
+    ESP_LOGI(TAG, "Setup OUT transfer on ep %02x", out_ep->bEndpointAddress);
+  } else {
+    ESP_LOGI(TAG, "Device has no MIDI OUT endpoint (input only)");
+  }
 
-    // SETUP IN TRANSFER
-    if (in_transfer == NULL) {
-      usb_host_transfer_alloc(USB_EP_DESC_GET_MPS(in_ep), 0, &in_transfer);
+  if (in_ep != NULL) {
+    int mps = USB_EP_DESC_GET_MPS(in_ep);
+
+    // (Re)allocate if the previous device's buffer is too small. The previous
+    // IN transfer is no longer in flight: in_transfer_cb does not resubmit
+    // after NO_DEVICE / CANCELED.
+    if (in_transfer != NULL && in_transfer->data_buffer_size < (size_t)mps) {
+      usb_host_transfer_free(in_transfer);
+      in_transfer = NULL;
     }
-    // memset(in_transfer->data_buffer, 0, 4);
-    in_transfer->num_bytes = USB_EP_DESC_GET_MPS(in_ep);
+    if (in_transfer == NULL) {
+      ESP_ERROR_CHECK(usb_host_transfer_alloc(mps, 0, &in_transfer));
+    }
+
+    in_transfer->num_bytes = mps;
     in_transfer->device_handle = driver_obj->dev_hdl;
     in_transfer->bEndpointAddress = in_ep->bEndpointAddress;
     in_transfer->timeout_ms = 5000;
     in_transfer->callback = in_transfer_cb;
-    in_transfer->context = (void*)&driver_obj;
+    in_transfer->context = (void*)driver_obj;
 
-    ESP_LOGI(TAG, "SUKU start IN transfer on ep %02x nice", in_ep->bEndpointAddress);
-    usb_host_transfer_submit(in_transfer);
-
-    // Get the device's string descriptors next
-    driver_obj->actions &= ~ACTION_GET_CONFIG_DESC;
-    driver_obj->actions |= ACTION_GET_STR_DESC;
-
+    ESP_LOGI(TAG, "Start IN transfer on ep %02x", in_ep->bEndpointAddress);
+    usb_in_active = true;
+    if (usb_host_transfer_submit(in_transfer) != ESP_OK) {
+      usb_in_active = false;
+      ESP_LOGE(TAG, "IN transfer submit failed");
+    }
   } else {
-    ESP_LOGI(TAG, "Iface not found, try later!");
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    ESP_LOGI(TAG, "Device has no MIDI IN endpoint (output only)");
   }
+
+  // Get the device's string descriptors next
+  driver_obj->actions &= ~ACTION_GET_CONFIG_DESC;
+  driver_obj->actions |= ACTION_GET_STR_DESC;
 }
 
 static void action_get_str_desc(class_driver_t* driver_obj) {
@@ -415,23 +424,49 @@ static void action_get_str_desc(class_driver_t* driver_obj) {
   // driver_obj->actions &= ~ACTION_GET_STR_DESC;
 }
 
+static void midi_ep_stop(class_driver_t* driver_obj, uint8_t ep_addr) {
+  if (ep_addr == 0) {
+    return;
+  }
+  // Errors are expected here when the device is already gone; ignore them.
+  usb_host_endpoint_halt(driver_obj->dev_hdl, ep_addr);
+  usb_host_endpoint_flush(driver_obj->dev_hdl, ep_addr);
+  usb_host_endpoint_clear(driver_obj->dev_hdl, ep_addr);
+}
+
 static void aciton_close_dev(class_driver_t* driver_obj) {
 
   ESP_LOGI(TAG, "action_close_dev");
-  out_transfer = NULL;
 
-  if (driver_obj->claimed_interface != -1) {
+  // Stop USB output first so callbacks / the TX task do not submit anymore
+  usb_out_connected = false;
+  usb_in_active = false;
 
-    ESP_LOGI(TAG, "release interface %lx %lx %d", (long unsigned int)driver_obj->client_hdl, (long unsigned int)driver_obj->client_hdl, driver_obj->claimed_interface);
-    usb_host_interface_release(driver_obj->client_hdl, driver_obj->dev_hdl, driver_obj->claimed_interface);
-    driver_obj->claimed_interface = -1;
+  if (driver_obj->dev_hdl != NULL) {
+
+    midi_ep_stop(driver_obj, driver_obj->in_ep_addr);
+    midi_ep_stop(driver_obj, driver_obj->out_ep_addr);
+
+    // Let the flushed transfers' callbacks run before releasing the interface
+    usb_host_client_handle_events(driver_obj->client_hdl, 0);
+
+    if (driver_obj->claimed_interface != -1) {
+      ESP_LOGI(TAG, "release interface %d", driver_obj->claimed_interface);
+      usb_host_interface_release(driver_obj->client_hdl, driver_obj->dev_hdl, driver_obj->claimed_interface);
+      driver_obj->claimed_interface = -1;
+    }
+
+    ESP_LOGI(TAG, "close");
+    ESP_ERROR_CHECK(usb_host_device_close(driver_obj->client_hdl, driver_obj->dev_hdl));
   }
 
-  ESP_LOGI(TAG, "close");
-
-  ESP_ERROR_CHECK(usb_host_device_close(driver_obj->client_hdl, driver_obj->dev_hdl));
   driver_obj->dev_hdl = NULL;
   driver_obj->dev_addr = 0;
+  driver_obj->in_ep_addr = 0;
+  driver_obj->out_ep_addr = 0;
+
+  // Nothing is in flight anymore: the next device starts with a free OUT path
+  usb_out_ready = 1;
 
   ESP_ERROR_CHECK(usb_host_client_deregister(driver_obj->client_hdl));
 

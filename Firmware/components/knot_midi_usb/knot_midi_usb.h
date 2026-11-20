@@ -20,6 +20,8 @@ typedef struct {
   usb_device_handle_t dev_hdl;
   uint32_t actions;
   int claimed_interface;
+  uint8_t in_ep_addr;  // 0 if none
+  uint8_t out_ep_addr; // 0 if none
 } class_driver_t;
 
 uint8_t IRAM_ATTR knot_midi_usb_out_isready(void);
