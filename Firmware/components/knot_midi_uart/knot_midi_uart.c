@@ -56,6 +56,13 @@ static void midi_uart_init(QueueHandle_t* uart_queue) {
   uart_set_pin(EX_UART_NUM, 17, 18, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
   uart_set_line_inverse(EX_UART_NUM, UART_SIGNAL_TXD_INV);
+
+  // Low latency receive: by default the driver only moves bytes out of the
+  // hardware FIFO when 120 bytes are waiting or after the line has been idle
+  // for 10 character times (~3.2 ms at 31250 baud). Hand over every byte as
+  // soon as it arrives instead (max ~3125 interrupts/s at MIDI speed).
+  uart_set_rx_full_threshold(EX_UART_NUM, 1);
+  uart_set_rx_timeout(EX_UART_NUM, 1);
 }
 
 void knot_midi_uart_init(struct knot_midi_uart_model* midi_uart) {
