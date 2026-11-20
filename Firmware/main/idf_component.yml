@@ -1,10 +1,10 @@
 ## IDF Component Manager Manifest File
 dependencies:
   espressif/usb_host_cdc_acm: "^2.0.4"
-  sukuwc/grid_common: "*"
-  sukuwc/grid_esp32_led: "*"
-  sukuwc/grid_esp32_nvm: "*"
-  sukuwc/grid_esp32_littlefs: "*"
+  sukuwc/grid_common: "<2026.2.270000"
+  sukuwc/grid_esp32_led: "<2026.2.270000"
+  sukuwc/grid_esp32_nvm: "<2026.2.270000"
+  sukuwc/grid_esp32_littlefs: "<2026.2.270000"
   joltwallet/littlefs: "*"
   ## Required IDF version
   idf:
