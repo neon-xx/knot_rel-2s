@@ -17,7 +17,7 @@ ENV IDF_PATH=/esp-idf
 ENTRYPOINT ["/esp-idf/tools/docker/entrypoint.sh"]
 
 # Install pre-commit from pip
-RUN python3 -m pip install --break-system-packages pre-commit
+RUN python3 -m pip install --break-system-packages --ignore-installed pre-commit
 
 # Pre-install hook environments using a bind mount so the config file is
 # available during the build but never written into the image layer.
