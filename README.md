@@ -10,9 +10,9 @@
 >
 > Knot only works as a USB host, so no MIDI is sent from the USB-A port to the USB-C port or to a computer.
 >
-> **Supported OP-Z setup:** plug the USB controller into Knot's USB-A host port, and connect Knot's **TRS MIDI out** to the OP-Z's TRS MIDI input (through its module).
->
-> Connecting the OP-Z directly to Knot's USB-A port currently **does not work**. The cause hasn't been found yet; see the USB-related items in [`Firmware/KNOWN_ISSUES.md`](Firmware/KNOWN_ISSUES.md).
+> **Tested OP-Z setups:**
+> - **TRS (recommended):** connect Knot's **TRS MIDI out** to the OP-Z's TRS MIDI input (through its module). Tested with a controller on Knot's USB-A port and with one on Knot's TRS MIDI in.
+> - **USB:** the OP-Z can also be plugged straight into Knot's USB-A port, with the controller on Knot's TRS MIDI in. **Connect the OP-Z while it is switched off, then power it on.** If it is already on when you plug it in, Knot doesn't pick it up (see item 7 in [`Firmware/KNOWN_ISSUES.md`](Firmware/KNOWN_ISSUES.md)).
 >
 > | Turn | Binary offset in | Two's complement out |
 > |------|------------------|----------------------|
@@ -27,7 +27,7 @@
 > **Notes:**
 > - Every CC 32–49 message is converted, so don't use this firmware with a controller that sends ordinary absolute values on those CCs.
 > - To change the CC range, edit `KNOT_REL_CC_FIRST` / `KNOT_REL_CC_LAST` in [`Firmware/components/knot_midi_translator/knot_midi_translator.h`](Firmware/components/knot_midi_translator/knot_midi_translator.h). Pushing to `main` rebuilds and republishes the firmware.
-> - Known bugs in the original Knot firmware, which this fork has not fixed yet, are listed in [`Firmware/KNOWN_ISSUES.md`](Firmware/KNOWN_ISSUES.md).
+> - This fork also fixes several bugs in the original Knot firmware (TRS input parsing, System Common messages such as MTC and Song Position, USB hot-plug and single-endpoint USB devices, and thread-safe MIDI queues). Details and the remaining open issues are in [`Firmware/KNOWN_ISSUES.md`](Firmware/KNOWN_ISSUES.md).
 
 ## KNOT - USB MIDI Host
 

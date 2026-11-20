@@ -21,7 +21,7 @@ input, the first one under AddressSanitizer.
 | 4 | USB output stalls after hot-plug; transfer buffer reuse | Medium | **Fixed** (needs hardware test) |
 | 5 | MIDI queues not thread-safe and overflow silently | Low–Medium | **Fixed** (needs hardware test) |
 | 6 | Minor issues | Low | **Mostly fixed** (see below) |
-| 7 | OP-Z on the USB-A host port doesn't work | Medium | Open; fix 6 may help, retest |
+| 7 | OP-Z on the USB-A host port only works if connected while off | Low | Open, workaround available |
 
 ---
 
@@ -168,7 +168,23 @@ queue is full.
   text to `ets_printf()` as a format string. Any `%` in the output is
   interpreted again. Use `ets_printf("%s", temp)`.
 
-## 7. OP-Z on the USB-A host port doesn't work (observed)
+## 7. OP-Z on the USB-A host port only works if connected while off (observed)
+
+> **Update 2026-11-20 (bugfixes firmware):** the OP-Z **works** on the USB-A port
+> if it is connected while switched off and then powered on. If it is already on
+> when plugged in, Knot doesn't pick it up. It wasn't checked whether the
+> original firmware behaved the same way.
+>
+> **Leading hypothesis:** a powered-on OP-Z may enumerate, drop and re-enumerate
+> in quick succession (for example while switching USB modes). The class driver
+> only accepts `USB_HOST_CLIENT_EVENT_NEW_DEV` while `dev_addr == 0`, and
+> `aciton_close_dev()` processes client events before clearing `dev_addr`, then
+> deregisters and re-registers the client. A NEW_DEV that arrives during that
+> window can be lost, leaving Knot waiting. To confirm, capture the ESP log
+> while plugging in a powered-on OP-Z and look for a DEV_GONE/NEW_DEV pair. A
+> possible fix is to queue NEW_DEV addresses instead of dropping them, and to
+> re-scan connected devices (`usb_host_device_addr_list_fill()`) after
+> re-registering.
 
 **Reported:** 2026-11-20, with this fork's firmware. Sending to the OP-Z through
 Knot's TRS MIDI out works. Plugging the OP-Z directly into Knot's USB-A host
