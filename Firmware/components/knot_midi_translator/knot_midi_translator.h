@@ -52,6 +52,11 @@ uint8_t uart_midi_is_byte_rtm(uint8_t byte);
  */
 struct uart_midi_event_packet uart_midi_process_byte(uint8_t byte);
 
+/**
+ * @brief Reset the TRS/UART byte parser (clears SysEx state and Running Status)
+ */
+void uart_midi_processor_reset(void);
+
 /*
  * Relative CC re-encoding
  *

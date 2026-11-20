@@ -408,6 +408,170 @@ void uart_midi_convert_relative_cc__should_workWithRunningStatus(void) {
   TEST_ASSERT_EQUAL_UINT8(0x7F, ev.byte3);
 }
 
+static struct uart_midi_event_packet feed_bytes(const uint8_t* bytes, int n, int* emitted) {
+  struct uart_midi_event_packet last = {0};
+  *emitted = 0;
+  for (int i = 0; i < n; i++) {
+    struct uart_midi_event_packet ev = uart_midi_process_byte(bytes[i]);
+    if (ev.length) {
+      last = ev;
+      (*emitted)++;
+    }
+  }
+  return last;
+}
+
+#define PKT(l, a, b, c) ((struct uart_midi_event_packet){.length = (l), .byte1 = (a), .byte2 = (b), .byte3 = (c)})
+#define USBPKT(a, b, c, d) ((struct usb_midi_event_packet){.byte0 = (a), .byte1 = (b), .byte2 = (c), .byte3 = (d)})
+
+void uart_midi_process_byte__should_ignoreDataBytesWithoutStatus(void) {
+  uart_midi_processor_reset();
+  int n;
+  const uint8_t stray[] = {0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46};
+  feed_bytes(stray, sizeof stray, &n);
+  TEST_ASSERT_EQUAL_INT(0, n);
+
+  // parser still works afterwards
+  const uint8_t note[] = {0x90, 0x3C, 0x64};
+  struct uart_midi_event_packet ev = feed_bytes(note, 3, &n);
+  struct uart_midi_event_packet exp = PKT(3, 0x90, 0x3C, 0x64);
+  TEST_ASSERT_EQUAL_INT(1, n);
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+
+  // stray data after SysEx end (SysEx cancels running status)
+  const uint8_t sx[] = {0xF0, 0x7E, 0xF7, 0x10, 0x11, 0x12, 0x13};
+  feed_bytes(sx, sizeof sx, &n);
+  TEST_ASSERT_EQUAL_INT(1, n);
+}
+
+void uart_midi_process_byte__should_parseSystemCommon(void) {
+  uart_midi_processor_reset();
+  int n;
+  struct uart_midi_event_packet ev, exp;
+
+  // three MTC quarter frames
+  const uint8_t mtc[] = {0xF1, 0x01, 0xF1, 0x12, 0xF1, 0x23};
+  ev = feed_bytes(mtc, sizeof mtc, &n);
+  exp = PKT(2, 0xF1, 0x23, 0x00);
+  TEST_ASSERT_EQUAL_INT(3, n);
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+
+  // song select
+  const uint8_t ss[] = {0xF3, 0x05};
+  ev = feed_bytes(ss, 2, &n);
+  exp = PKT(2, 0xF3, 0x05, 0x00);
+  TEST_ASSERT_EQUAL_INT(1, n);
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+
+  // song position pointer
+  const uint8_t spp[] = {0xF2, 0x10, 0x02};
+  ev = feed_bytes(spp, 3, &n);
+  exp = PKT(3, 0xF2, 0x10, 0x02);
+  TEST_ASSERT_EQUAL_INT(1, n);
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+
+  // tune request
+  ev = uart_midi_process_byte(0xF6);
+  exp = PKT(1, 0xF6, 0x00, 0x00);
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+
+  // system common cancels running status
+  const uint8_t rs[] = {0xB0, 0x20, 0x41, 0xF2, 0x00, 0x00, 0x20, 0x41};
+  feed_bytes(rs, sizeof rs, &n);
+  TEST_ASSERT_EQUAL_INT(2, n); // CC + SPP, trailing data bytes ignored
+
+  // undefined F4/F5 are ignored and cancel running status
+  const uint8_t und[] = {0x90, 0x3C, 0x64, 0xF4, 0x3C, 0x64, 0xF5};
+  feed_bytes(und, sizeof und, &n);
+  TEST_ASSERT_EQUAL_INT(1, n);
+
+  // clock in the middle of SPP
+  const uint8_t sppclk[] = {0xF2, 0x10, 0xF8, 0x02};
+  ev = feed_bytes(sppclk, sizeof sppclk, &n);
+  exp = PKT(3, 0xF2, 0x10, 0x02);
+  TEST_ASSERT_EQUAL_INT(2, n);
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+}
+
+void uart_midi_process_byte__should_terminateUnfinishedSysex(void) {
+  uart_midi_processor_reset();
+  int n;
+  struct uart_midi_event_packet ev, exp;
+
+  // SysEx cut short by Note On; then Program Change with running status
+  const uint8_t b[] = {0xF0, 0x7E, 0x01, 0x02, 0x90, 0x3C, 0x64};
+  ev = feed_bytes(b, sizeof b, &n);
+  exp = PKT(3, 0x90, 0x3C, 0x64);
+  TEST_ASSERT_EQUAL_INT(2, n); // first sysex chunk + note on
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+
+  const uint8_t pc[] = {0xC0, 0x05, 0x06};
+  ev = feed_bytes(pc, sizeof pc, &n);
+  exp = PKT(2, 0xC0, 0x06, 0x00);
+  TEST_ASSERT_EQUAL_INT(2, n);
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+
+  // clock inside SysEx passes and does not disturb it
+  const uint8_t sxclk[] = {0xF0, 0x01, 0xF8, 0x02, 0xF7};
+  int clocks = 0;
+  for (unsigned i = 0; i < sizeof sxclk; i++) {
+    ev = uart_midi_process_byte(sxclk[i]);
+    if (ev.length == 1 && ev.byte1 == 0xF8) {
+      clocks++;
+    }
+  }
+  TEST_ASSERT_EQUAL_INT(1, clocks);
+  // last event: F0 01 02 then F7 alone
+  exp = PKT(1, 0xF7, 0x00, 0x00);
+  TEST_ASSERT_EQUAL_MEMORY(&exp, &ev, 4);
+}
+
+extern uint8_t uart_midi_processor_buffer_index;
+extern uint8_t uart_midi_processor_buffer_limit;
+
+void uart_midi_process_byte__should_surviveRandomInput(void) {
+  uart_midi_processor_reset();
+  uint32_t x = 0x12345678;
+  for (int i = 0; i < 2000000; i++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    struct uart_midi_event_packet ev = uart_midi_process_byte((uint8_t)x);
+    TEST_ASSERT_TRUE(ev.length <= 3);
+    TEST_ASSERT_TRUE(uart_midi_processor_buffer_index <= 3);
+    (void)midi_uart_to_usb(ev);
+  }
+}
+
+void midi_uart_to_usb__should_useCorrectSystemCommonCin(void) {
+  struct usb_midi_event_packet a, e;
+
+  a = midi_uart_to_usb(PKT(2, 0xF1, 0x23, 0x00));
+  e = USBPKT(0x02, 0xF1, 0x23, 0x00);
+  TEST_ASSERT_EQUAL_MEMORY(&e, &a, 4);
+
+  a = midi_uart_to_usb(PKT(3, 0xF2, 0x10, 0x02));
+  e = USBPKT(0x03, 0xF2, 0x10, 0x02);
+  TEST_ASSERT_EQUAL_MEMORY(&e, &a, 4);
+
+  a = midi_uart_to_usb(PKT(2, 0xF3, 0x05, 0x00));
+  e = USBPKT(0x02, 0xF3, 0x05, 0x00);
+  TEST_ASSERT_EQUAL_MEMORY(&e, &a, 4);
+
+  a = midi_uart_to_usb(PKT(1, 0xF6, 0x00, 0x00));
+  e = USBPKT(0x05, 0xF6, 0x00, 0x00);
+  TEST_ASSERT_EQUAL_MEMORY(&e, &a, 4);
+
+  a = midi_uart_to_usb(PKT(1, 0xFA, 0x00, 0x00));
+  e = USBPKT(0x0F, 0xFA, 0x00, 0x00);
+  TEST_ASSERT_EQUAL_MEMORY(&e, &a, 4);
+
+  // round trip USB -> UART -> USB keeps system common intact
+  struct usb_midi_event_packet in = USBPKT(0x03, 0xF2, 0x10, 0x02);
+  a = midi_uart_to_usb(usb_midi_to_uart(in));
+  TEST_ASSERT_EQUAL_MEMORY(&in, &a, 4);
+}
+
 void test_function_should_doAlsoDoBlah(void) {
   // more test stuff
 }
@@ -430,6 +594,12 @@ int main(void) {
   RUN_TEST(midi_rel_binoffset_to_twos_complement__should_convertValues);
   RUN_TEST(uart_midi_convert_relative_cc__should_onlyTouchConfiguredCCs);
   RUN_TEST(uart_midi_convert_relative_cc__should_workWithRunningStatus);
+
+  RUN_TEST(uart_midi_process_byte__should_ignoreDataBytesWithoutStatus);
+  RUN_TEST(uart_midi_process_byte__should_parseSystemCommon);
+  RUN_TEST(uart_midi_process_byte__should_terminateUnfinishedSysex);
+  RUN_TEST(uart_midi_process_byte__should_surviveRandomInput);
+  RUN_TEST(midi_uart_to_usb__should_useCorrectSystemCommonCin);
 
   return UNITY_END();
 }

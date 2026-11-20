@@ -92,47 +92,64 @@ uint8_t uart_midi_processor_state_is_sysex = 0;
 struct usb_midi_event_packet midi_uart_to_usb(struct uart_midi_event_packet uart_packet) {
 
   // initialize return packet
-  struct usb_midi_event_packet ev = {.byte0 = 0, .byte1 = 0, .byte2 = 0, .byte3 = 0};
+  struct usb_midi_event_packet ev = {.byte0 = 0, .byte1 = uart_packet.byte1, .byte2 = uart_packet.byte2, .byte3 = uart_packet.byte3};
 
   if (uart_packet.length == 0) {
+    ev.byte1 = 0;
+    ev.byte2 = 0;
+    ev.byte3 = 0;
     return ev;
   }
 
   if (uart_packet.byte1 == 0xF0 || uart_packet.byte1 < 128) {
     // Sysex start or continue
     if (uart_packet.byte2 == 0xF7) {
-      ev.byte0 = 0x06;
-      ev.byte1 = uart_packet.byte1;
-      ev.byte2 = uart_packet.byte2;
-      ev.byte3 = uart_packet.byte3;
+      ev.byte0 = 0x06; // SysEx ends with following two bytes
     } else if (uart_packet.byte3 == 0xF7) {
-      ev.byte0 = 0x07;
-      ev.byte1 = uart_packet.byte1;
-      ev.byte2 = uart_packet.byte2;
-      ev.byte3 = uart_packet.byte3;
+      ev.byte0 = 0x07; // SysEx ends with following three bytes
     } else {
-      ev.byte0 = 0x04;
-      ev.byte1 = uart_packet.byte1;
-      ev.byte2 = uart_packet.byte2;
-      ev.byte3 = uart_packet.byte3;
+      ev.byte0 = 0x04; // SysEx starts or continues
     }
+    return ev;
+  }
 
-  } else if (uart_packet.byte1 == 0xF7) {
-    // Sysex stop
-    ev.byte0 = 0x05;
-    ev.byte1 = uart_packet.byte1;
-    ev.byte2 = uart_packet.byte2;
-    ev.byte3 = uart_packet.byte3;
-
-  } else {
-    // Channel Voice Message or real time
+  switch (uart_packet.byte1) {
+  case 0xF7: // Sysex stop (single byte)
+  case 0xF6: // Tune Request
+    ev.byte0 = 0x05; // Single-byte System Common message or SysEx end
+    break;
+  case 0xF1: // MTC Quarter Frame
+  case 0xF3: // Song Select
+    ev.byte0 = 0x02; // Two-byte System Common message
+    break;
+  case 0xF2: // Song Position Pointer
+    ev.byte0 = 0x03; // Three-byte System Common message
+    break;
+  default:
+    // Channel Voice Message (CIN = status high nibble) or Real-Time (CIN 0xF)
     ev.byte0 = (uart_packet.byte1 >> 4);
-    ev.byte1 = uart_packet.byte1;
-    ev.byte2 = uart_packet.byte2;
-    ev.byte3 = uart_packet.byte3;
+    break;
   }
 
   return ev;
+}
+
+static void uart_midi_processor_clear(void) {
+  uart_midi_processor_buffer[0] = 0;
+  uart_midi_processor_buffer[1] = 0;
+  uart_midi_processor_buffer[2] = 0;
+  uart_midi_processor_buffer_index = 0;
+  uart_midi_processor_buffer_limit = 0; // no running status
+}
+
+void uart_midi_processor_reset(void) {
+  uart_midi_processor_clear();
+  uart_midi_processor_state_is_sysex = 0;
+}
+
+static struct uart_midi_event_packet uart_midi_processor_assemble(void) {
+  return (struct uart_midi_event_packet){
+      .length = uart_midi_processor_buffer_index, .byte1 = uart_midi_processor_buffer[0], .byte2 = uart_midi_processor_buffer[1], .byte3 = uart_midi_processor_buffer[2]};
 }
 
 struct uart_midi_event_packet uart_midi_process_byte(uint8_t byte) {
@@ -140,105 +157,117 @@ struct uart_midi_event_packet uart_midi_process_byte(uint8_t byte) {
   // initialize return packet
   struct uart_midi_event_packet ev = {.length = 0, .byte1 = 0, .byte2 = 0, .byte3 = 0};
 
+  // Real-Time Messages are single bytes that may appear anywhere (even inside
+  // SysEx or between the bytes of another message) and do not affect any state.
+  if (uart_midi_is_byte_rtm(byte)) {
+    return (struct uart_midi_event_packet){.length = 1, .byte1 = byte, .byte2 = 0, .byte3 = 0};
+  }
+
   if (uart_midi_processor_state_is_sysex) {
 
-    // Check for Real-Time Messages first - they must be processed immediately
-    // even during SysEx, without affecting the SysEx buffer or state
-    if (uart_midi_is_byte_rtm(byte)) {
-      // Return RTM immediately without storing in buffer
-      return (struct uart_midi_event_packet){.length = 1, .byte1 = byte, .byte2 = 0, .byte3 = 0};
-    }
-
-    // store sysex data
-    uart_midi_processor_buffer[uart_midi_processor_buffer_index] = byte;
-    uart_midi_processor_buffer_index++;
-
     if (byte == 0xF7) {
-      // sysex end command: switch to normal mode
+
+      // store sysex end and emit what is buffered
+      uart_midi_processor_buffer[uart_midi_processor_buffer_index++] = byte;
+      ev = uart_midi_processor_assemble();
+
+      // switch to normal mode, SysEx cancels Running Status
       uart_midi_processor_state_is_sysex = 0;
-
-      // assemble return packet
-      ev = (struct uart_midi_event_packet){
-          .length = uart_midi_processor_buffer_index, .byte1 = uart_midi_processor_buffer[0], .byte2 = uart_midi_processor_buffer[1], .byte3 = uart_midi_processor_buffer[2]};
-
-      // Clear buffer
-      uart_midi_processor_buffer[0] = 0;
-      uart_midi_processor_buffer[1] = 0;
-      uart_midi_processor_buffer[2] = 0;
-      uart_midi_processor_buffer_index = 0;
-      uart_midi_processor_buffer_limit = 0;
-
-    } else if (uart_midi_processor_buffer_index == 3) {
-      // no more space, send packet and continue in sysex mode
-
-      // assemble return packet
-      ev = (struct uart_midi_event_packet){
-          .length = uart_midi_processor_buffer_index, .byte1 = uart_midi_processor_buffer[0], .byte2 = uart_midi_processor_buffer[1], .byte3 = uart_midi_processor_buffer[2]};
-
-      // Clear buffer
-      uart_midi_processor_buffer[0] = 0;
-      uart_midi_processor_buffer[1] = 0;
-      uart_midi_processor_buffer[2] = 0;
-      uart_midi_processor_buffer_index = 0;
-      uart_midi_processor_buffer_limit = 0;
+      uart_midi_processor_clear();
+      return ev;
     }
 
-  } else {
+    if (byte < 0x80) {
 
-    if (byte == 0xF0) {
-      // switch to sysex mode
-      uart_midi_processor_state_is_sysex = 1;
-      // Clear buffer and store sysex start command
+      // store sysex data
+      uart_midi_processor_buffer[uart_midi_processor_buffer_index++] = byte;
+
+      if (uart_midi_processor_buffer_index == 3) {
+        // no more space, send packet and continue in sysex mode
+        ev = uart_midi_processor_assemble();
+        uart_midi_processor_clear();
+      }
+      return ev;
+    }
+
+    // Any other status byte terminates an unfinished SysEx. The partial chunk
+    // is dropped and the status byte is processed normally below.
+    uart_midi_processor_state_is_sysex = 0;
+    uart_midi_processor_clear();
+  }
+
+  if (byte == 0xF0) {
+    // switch to sysex mode, store sysex start command
+    uart_midi_processor_state_is_sysex = 1;
+    uart_midi_processor_clear();
+    uart_midi_processor_buffer[0] = byte;
+    uart_midi_processor_buffer_index = 1;
+    return ev;
+  }
+
+  if (byte >= 0x80) {
+
+    uart_midi_processor_clear();
+
+    if (byte < 0xF0) {
+      // Channel Voice Message: becomes the Running Status
       uart_midi_processor_buffer[0] = byte;
+      uart_midi_processor_buffer_index = 1;
+
+      if ((byte & 0xF0) == 0xC0 || (byte & 0xF0) == 0xD0) {
+        // program change and channel pressure have one data byte
+        uart_midi_processor_buffer_limit = 2;
+      } else {
+        uart_midi_processor_buffer_limit = 3;
+      }
+      return ev;
+    }
+
+    // System Common Messages (cancel Running Status)
+    switch (byte) {
+    case 0xF1: // MTC Quarter Frame
+    case 0xF3: // Song Select
+      uart_midi_processor_buffer[0] = byte;
+      uart_midi_processor_buffer_index = 1;
+      uart_midi_processor_buffer_limit = 2;
+      break;
+    case 0xF2: // Song Position Pointer
+      uart_midi_processor_buffer[0] = byte;
+      uart_midi_processor_buffer_index = 1;
+      uart_midi_processor_buffer_limit = 3;
+      break;
+    case 0xF6: // Tune Request, no data bytes
+      ev = (struct uart_midi_event_packet){.length = 1, .byte1 = byte, .byte2 = 0, .byte3 = 0};
+      break;
+    default:
+      // 0xF4, 0xF5 (undefined) and stray 0xF7 (EOX outside SysEx): ignore
+      break;
+    }
+    return ev;
+  }
+
+  // Data byte
+
+  if (uart_midi_processor_buffer_limit == 0 || uart_midi_processor_buffer_index == 0 || uart_midi_processor_buffer_index >= uart_midi_processor_buffer_limit) {
+    // No status byte to attach this data byte to (e.g. power-up mid-stream): ignore
+    return ev;
+  }
+
+  uart_midi_processor_buffer[uart_midi_processor_buffer_index++] = byte;
+
+  if (uart_midi_processor_buffer_index == uart_midi_processor_buffer_limit) {
+
+    ev = uart_midi_processor_assemble();
+
+    if (uart_midi_processor_buffer[0] < 0xF0) {
+      // Clear the Data bytes from the buffer, but retain the Status byte,
+      // since subsequent messages might be sent with Running Status.
       uart_midi_processor_buffer[1] = 0;
       uart_midi_processor_buffer[2] = 0;
       uart_midi_processor_buffer_index = 1;
-      uart_midi_processor_buffer_limit = 3;
-
     } else {
-
-      if (byte > 127) {
-
-        // Real-Time messages are at most one byte long, can occur in the
-        // middle of other messages, and do not affect Running Status.
-        if (uart_midi_is_byte_rtm(byte)) {
-
-          // assemble return packet but do not clear the buffer
-          ev = (struct uart_midi_event_packet){.length = 1, .byte1 = byte, .byte2 = 0, .byte3 = 0};
-        } else {
-
-          // Clear buffer and store the command
-          uart_midi_processor_buffer[0] = byte;
-          uart_midi_processor_buffer[1] = 0;
-          uart_midi_processor_buffer[2] = 0;
-          uart_midi_processor_buffer_index = 1;
-
-          if ((byte & 0b11110000) == 0xC0 || (byte & 0b11110000) == 0xD0) {
-            // set buffer limit to 2 for program change and channel preassure/aftertouch command types
-            uart_midi_processor_buffer_limit = 2;
-          } else {
-            // set buffer limit to 3 for all other channel voice messages
-            uart_midi_processor_buffer_limit = 3;
-          }
-        }
-
-      } else {
-        // store incoming byte
-        uart_midi_processor_buffer[uart_midi_processor_buffer_index] = byte;
-        uart_midi_processor_buffer_index++;
-
-        if (uart_midi_processor_buffer_index == uart_midi_processor_buffer_limit) {
-          // assemble return packet
-          ev = (struct uart_midi_event_packet){
-              .length = uart_midi_processor_buffer_index, .byte1 = uart_midi_processor_buffer[0], .byte2 = uart_midi_processor_buffer[1], .byte3 = uart_midi_processor_buffer[2]};
-
-          // Clear the Data bytes from the buffer, but retain the Status byte,
-          // since subsequent messages might be sent with Running Status.
-          uart_midi_processor_buffer[1] = 0;
-          uart_midi_processor_buffer[2] = 0;
-          uart_midi_processor_buffer_index = 1;
-        }
-      }
+      // System Common Messages do not establish Running Status
+      uart_midi_processor_clear();
     }
   }
 
