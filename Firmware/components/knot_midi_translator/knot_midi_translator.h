@@ -52,6 +52,39 @@ uint8_t uart_midi_is_byte_rtm(uint8_t byte);
  */
 struct uart_midi_event_packet uart_midi_process_byte(uint8_t byte);
 
+/*
+ * Relative CC re-encoding
+ *
+ * Control Change messages whose controller number lies in
+ * [KNOT_REL_CC_FIRST, KNOT_REL_CC_LAST] (any channel) are assumed to carry a
+ * relative value in "binary offset" encoding (64 = 0, 65 = +1, 63 = -1, ...)
+ * and are rewritten to 7-bit two's complement (0 = 0, 1 = +1, 127 = -1, ...).
+ * All other messages pass through unchanged.
+ */
+#ifndef KNOT_REL_CC_FIRST
+#define KNOT_REL_CC_FIRST 32
+#endif
+#ifndef KNOT_REL_CC_LAST
+#define KNOT_REL_CC_LAST 49
+#endif
+
+/**
+ * @brief Convert a binary offset relative value (64 = zero) to 7-bit two's complement
+ * @param[in] value 7-bit binary offset value (0..127)
+ *
+ * @return 7-bit two's complement value (0..127)
+ */
+uint8_t midi_rel_binoffset_to_twos_complement(uint8_t value);
+
+/**
+ * @brief Re-encode relative CC values in the configured CC range from binary
+ *        offset to two's complement. Non-matching packets are returned as-is.
+ * @param[in] packet 1-3 byte uart_midi_event_packet
+ *
+ * @return the (possibly modified) packet
+ */
+struct uart_midi_event_packet uart_midi_convert_relative_cc(struct uart_midi_event_packet packet);
+
 #ifdef __cplusplus
 }
 #endif

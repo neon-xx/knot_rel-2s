@@ -244,3 +244,24 @@ struct uart_midi_event_packet uart_midi_process_byte(uint8_t byte) {
 
   return ev;
 }
+
+uint8_t midi_rel_binoffset_to_twos_complement(uint8_t value) {
+  // (value - 64) wrapped to 7 bits; identical to flipping bit 6
+  return (uint8_t)((value ^ 0x40) & 0x7F);
+}
+
+struct uart_midi_event_packet uart_midi_convert_relative_cc(struct uart_midi_event_packet packet) {
+
+  // Only complete 3-byte Control Change messages (status 0xB0..0xBF)
+  if (packet.length != 3 || (packet.byte1 & 0xF0) != 0xB0) {
+    return packet;
+  }
+
+  if (packet.byte2 < KNOT_REL_CC_FIRST || packet.byte2 > KNOT_REL_CC_LAST) {
+    return packet;
+  }
+
+  packet.byte3 = midi_rel_binoffset_to_twos_complement(packet.byte3);
+
+  return packet;
+}

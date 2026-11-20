@@ -133,6 +133,9 @@ void knot_midi_uart_rx_task(void* arg) {
           continue;
         }
 
+        // Re-encode relative CCs (binary offset -> two's complement) for all outputs
+        uart_ev = uart_midi_convert_relative_cc(uart_ev);
+
         struct usb_midi_event_packet usb_ev = midi_uart_to_usb(uart_ev);
 
         // Prepare for sending through usb

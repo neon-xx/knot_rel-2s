@@ -334,6 +334,80 @@ void midi_uart_to_usb__should_convertAllMessages(void) {
   TEST_ASSERT_EQUAL_MEMORY(&expected, &actual, 4);
 }
 
+void midi_rel_binoffset_to_twos_complement__should_convertValues(void) {
+  TEST_ASSERT_EQUAL_UINT8(0, midi_rel_binoffset_to_twos_complement(64));   // 0
+  TEST_ASSERT_EQUAL_UINT8(1, midi_rel_binoffset_to_twos_complement(65));   // +1
+  TEST_ASSERT_EQUAL_UINT8(127, midi_rel_binoffset_to_twos_complement(63)); // -1
+  TEST_ASSERT_EQUAL_UINT8(63, midi_rel_binoffset_to_twos_complement(127)); // +63
+  TEST_ASSERT_EQUAL_UINT8(64, midi_rel_binoffset_to_twos_complement(0));   // -64
+  TEST_ASSERT_EQUAL_UINT8(10, midi_rel_binoffset_to_twos_complement(74));  // +10
+  TEST_ASSERT_EQUAL_UINT8(118, midi_rel_binoffset_to_twos_complement(54)); // -10
+
+  // exhaustive: decoded signed value must be preserved
+  for (int v = 0; v < 128; v++) {
+    int8_t delta = (int8_t)(v - 64);
+    uint8_t out = midi_rel_binoffset_to_twos_complement((uint8_t)v);
+    int8_t decoded = (out & 0x40) ? (int8_t)(out - 128) : (int8_t)out;
+    TEST_ASSERT_EQUAL_INT8(delta, decoded);
+  }
+}
+
+void uart_midi_convert_relative_cc__should_onlyTouchConfiguredCCs(void) {
+  struct uart_midi_event_packet in, out;
+
+  // CC 32..49 on every channel: converted
+  for (int ch = 0; ch < 16; ch++) {
+    for (int cc = 32; cc <= 49; cc++) {
+      in = (struct uart_midi_event_packet){.length = 3, .byte1 = 0xB0 | ch, .byte2 = cc, .byte3 = 65};
+      out = uart_midi_convert_relative_cc(in);
+      TEST_ASSERT_EQUAL_UINT8(3, out.length);
+      TEST_ASSERT_EQUAL_UINT8(0xB0 | ch, out.byte1);
+      TEST_ASSERT_EQUAL_UINT8(cc, out.byte2);
+      TEST_ASSERT_EQUAL_UINT8(1, out.byte3);
+    }
+  }
+
+  // CC 31 and 50: untouched
+  in = (struct uart_midi_event_packet){.length = 3, .byte1 = 0xB0, .byte2 = 31, .byte3 = 65};
+  out = uart_midi_convert_relative_cc(in);
+  TEST_ASSERT_EQUAL_MEMORY(&in, &out, 4);
+  in = (struct uart_midi_event_packet){.length = 3, .byte1 = 0xB0, .byte2 = 50, .byte3 = 65};
+  out = uart_midi_convert_relative_cc(in);
+  TEST_ASSERT_EQUAL_MEMORY(&in, &out, 4);
+
+  // Note-on with note 40: untouched
+  in = (struct uart_midi_event_packet){.length = 3, .byte1 = 0x90, .byte2 = 40, .byte3 = 65};
+  out = uart_midi_convert_relative_cc(in);
+  TEST_ASSERT_EQUAL_MEMORY(&in, &out, 4);
+
+  // SysEx continuation: untouched
+  in = (struct uart_midi_event_packet){.length = 3, .byte1 = 0x01, .byte2 = 40, .byte3 = 65};
+  out = uart_midi_convert_relative_cc(in);
+  TEST_ASSERT_EQUAL_MEMORY(&in, &out, 4);
+
+  // Empty packet: untouched
+  in = (struct uart_midi_event_packet){0};
+  out = uart_midi_convert_relative_cc(in);
+  TEST_ASSERT_EQUAL_MEMORY(&in, &out, 4);
+}
+
+void uart_midi_convert_relative_cc__should_workWithRunningStatus(void) {
+  struct uart_midi_event_packet ev;
+
+  // B0 20 41 then running status 20 3F
+  uart_midi_process_byte(0xB0);
+  uart_midi_process_byte(0x20);
+  ev = uart_midi_convert_relative_cc(uart_midi_process_byte(0x41));
+  TEST_ASSERT_EQUAL_UINT8(3, ev.length);
+  TEST_ASSERT_EQUAL_UINT8(0x01, ev.byte3);
+
+  uart_midi_process_byte(0x20);
+  ev = uart_midi_convert_relative_cc(uart_midi_process_byte(0x3F));
+  TEST_ASSERT_EQUAL_UINT8(3, ev.length);
+  TEST_ASSERT_EQUAL_UINT8(0xB0, ev.byte1);
+  TEST_ASSERT_EQUAL_UINT8(0x7F, ev.byte3);
+}
+
 void test_function_should_doAlsoDoBlah(void) {
   // more test stuff
 }
@@ -352,6 +426,10 @@ int main(void) {
 
   RUN_TEST(uart_midi_find_packet_from_buffer__should_recogniseChannelVoiceMessages);
   RUN_TEST(midi_uart_to_usb__should_convertAllMessages);
+
+  RUN_TEST(midi_rel_binoffset_to_twos_complement__should_convertValues);
+  RUN_TEST(uart_midi_convert_relative_cc__should_onlyTouchConfiguredCCs);
+  RUN_TEST(uart_midi_convert_relative_cc__should_workWithRunningStatus);
 
   return UNITY_END();
 }

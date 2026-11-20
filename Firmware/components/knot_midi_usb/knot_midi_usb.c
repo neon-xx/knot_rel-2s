@@ -270,7 +270,7 @@ static void in_transfer_cb(usb_transfer_t* in_transfer) {
         .byte3 = in_transfer->data_buffer[i + 3],
     };
 
-    knot_midi_queue_trsout_push(usb_midi_to_uart(evt));
+    knot_midi_queue_trsout_push(uart_midi_convert_relative_cc(usb_midi_to_uart(evt)));
   }
 
   usb_host_transfer_submit(in_transfer);
