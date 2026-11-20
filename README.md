@@ -1,7 +1,7 @@
 > [!NOTE]
 > ## About this fork: relative CC translation for the OP-Z
 >
-> This is a fork of [intechstudio/knot](https://github.com/intechstudio/knot). It modifies the Knot firmware so that a MIDI controller whose relative encoders only send **binary offset** values can work with a **Teenage Engineering OP-Z**, which expects relative values in **two's complement**.
+> This is a fork of [intechstudio/knot](https://github.com/intechstudio/knot). It modifies the Knot firmware so that a MIDI controller whose relative encoders only send **binary offset** values (such as a Novation Launchkey Mini MK4) can work with a **Teenage Engineering OP-Z**, which expects relative values in **two's complement**.
 >
 > **What it does:** Control Change messages on **CC 32–49**, on any MIDI channel, are converted from binary offset to 7-bit two's complement as they pass through Knot. All other messages pass through unchanged. The conversion applies on every route Knot has:
 > - USB controller (on the USB-A host port) → TRS MIDI out
